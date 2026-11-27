@@ -37,7 +37,7 @@ from esr.fitting.utils import (
     likelihood_catalogue_paths,
     raw_catalogue_paths,
 )
-from esr.generation import generator
+from esr.generation import generator, simplifier
 
 
 def test_cc(monkeypatch):
@@ -431,6 +431,22 @@ def test_function_making():
 
     for comp in [5, 6]:
         esr.generation.duplicate_checker.main("core_maths", comp, track_memory=True)
+
+
+def test_check_results_reuses_representative_after_repair(tmp_path):
+    (tmp_path / "all_equations_3.txt").write_text("a0 + x\na0 + x\n")
+    unique_path = tmp_path / "unique_equations_3.txt"
+    unique_path.write_text("a0*x\na0 + x\n")
+    matches_path = tmp_path / "matches_3.txt"
+    matches_path.write_text("0\n1\n")
+    inverse_path = tmp_path / "inv_subs_3.txt"
+    inverse_path.write_text("{a0: a0}\n\n")
+
+    simplifier.check_results(str(tmp_path), 3)
+
+    assert unique_path.read_text().splitlines() == ["a0 + x"]
+    np.testing.assert_array_equal(np.loadtxt(matches_path), [0, 0])
+    assert inverse_path.read_text().splitlines() == ["", ""]
 
 
 def test_node():
