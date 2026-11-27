@@ -4,7 +4,6 @@ import gc
 import hashlib
 import itertools
 import os
-import pprint
 import signal
 import sys
 from collections import OrderedDict
@@ -1824,62 +1823,41 @@ def check_results(dirname, compl, tmax=10):
         del shufidx
 
         print(f"\nNeed to change {len(to_change)} functions")
+        if not to_change:
+            return
         for r in to_change:
             print(r)
 
-        print("\nLoading all equations", flush=True)
         with open(f"{dirname}/all_equations_{compl}.txt", "r") as f:
             all_fun = f.read().splitlines()
-        for r in to_change:
-            r[1] = all_fun[r[0]]
-        del all_fun
-        gc.collect()
 
-        print("\nAppending new unique equations")
-        with open(f"{dirname}/unique_equations_{compl}.txt", "r") as f:
+        unique_path = f"{dirname}/unique_equations_{compl}.txt"
+        matches_path = f"{dirname}/matches_{compl}.txt"
+        inverse_path = f"{dirname}/inv_subs_{compl}.txt"
+        with open(unique_path, "r") as f:
             uniq_fun = f.read().splitlines()
-        nuniq = len(uniq_fun)
-
-        new_fun = [r[1] for r in to_change]
-        new_uniq, new_match = utils.get_unique_indexes(new_fun)
-        new_uniq_fun = list(new_uniq.keys())
-
-        with open(f"{dirname}/unique_equations_{compl}.txt", "w") as f:
-            w = 80
-            pp = pprint.PrettyPrinter(width=w, stream=f)
-
-            for s in uniq_fun:
-                if len(s + "\n") > w / 2:
-                    w = 2 * len(s)
-                    pp = pprint.PrettyPrinter(width=w, stream=f)
-                pp.pprint(s)
-
-            for s in new_uniq_fun:
-                if len(s + "\n") > w / 2:
-                    w = 2 * len(s)
-                    pp = pprint.PrettyPrinter(width=w, stream=f)
-                pp.pprint(s)
-        del uniq_fun
-        gc.collect()
-        s = f"sed 's/.$//; s/^.//' {dirname}/unique_equations_{compl}.txt > {dirname}/temp_{compl}.txt"
-        os.system(s)
-        s = f"mv {dirname}/temp_{compl}.txt {dirname}/unique_equations_{compl}.txt"
-        os.system(s)
-
-        print("\nChanging inverse subs")
-        with open(f"{dirname}/inv_subs_{compl}.txt", "r") as f:
+        matches = np.atleast_1d(np.loadtxt(matches_path, dtype=float)).astype(int)
+        with open(inverse_path, "r") as f:
             reader = csv.reader(f, delimiter=";")
             inv_subs = [row for row in reader]
-        for r in to_change:
-            inv_subs[r[0]] = ""
-        with open(f"{dirname}/inv_subs_{compl}.txt", "w") as f:
-            writer = csv.writer(f, delimiter=";")
-            writer.writerows(inv_subs)
-        del inv_subs
-        gc.collect()
 
-        print("\nChanging matches")
-        matches = np.loadtxt(f"{dirname}/matches_{compl}.txt").astype(int)
-        for i in range(len(to_change)):
-            matches[to_change[i][0]] = nuniq + new_match[to_change[i][1]]
-        np.savetxt(f"{dirname}/matches_{compl}.txt", matches)
+        by_formula = {formula: index for index, formula in enumerate(uniq_fun)}
+        for index, _ in to_change:
+            formula = all_fun[index]
+            if formula not in by_formula:
+                by_formula[formula] = len(uniq_fun)
+                uniq_fun.append(formula)
+            matches[index] = by_formula[formula]
+            inv_subs[index] = []
+
+        # A rejected mapping can leave its old representative with no callers.
+        used = np.unique(matches)
+        compact = np.empty(len(uniq_fun), dtype=int)
+        compact[used] = np.arange(len(used))
+        with utils.atomic_write(unique_path) as f:
+            for index in used:
+                print(uniq_fun[index], file=f)
+        with utils.atomic_write(inverse_path) as f:
+            csv.writer(f, delimiter=";").writerows(inv_subs)
+        with utils.atomic_write(matches_path) as f:
+            np.savetxt(f, compact[matches], fmt="%d")
